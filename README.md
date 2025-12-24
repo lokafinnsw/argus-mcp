@@ -9,37 +9,35 @@
 Argus MCP is a Model Context Protocol (MCP) server that provides rigorous code review through multiple AI models. Named after the all-seeing guardian of Greek mythology, it watches over your code with vigilance.
 
 **Works with any MCP-compatible client:**
-- ✅ Windsurf IDE
-- ✅ Claude Desktop
-- ✅ Other MCP clients
+- Windsurf IDE
+- Claude Desktop
+- Other MCP clients
 
 **Multilingual support:**
-- 🇷🇺 Russian
-- 🇬🇧 English
-- 🇨🇳 Chinese
-- And more - responds in the language of your request
+- Russian, English, Chinese, and more
+- Responds in the language of your request
 
-## ✨ Features
+## Features
 
-- 🛡️ **Zero-Trust Code Review** - Senior QA Engineer & Security Auditor approach
-- 🔄 **Multiple AI Models** - GLM 4.7, Gemini 3 Flash Preview, MiniMax M2.1
-- 🚀 **Smart Retry & Fallback** - Exponential backoff with automatic model switching
-- 💾 **Intelligent Caching** - 1-hour TTL cache for faster repeated checks
-- 🌍 **Language-Aware** - Specialized checks for 10+ programming languages
-- 📊 **Three Review Modes** - Single file, Git diff, Multiple files
-- 🔒 **Security First** - OWASP checks, performance analysis, architecture review
+- **Zero-Trust Code Review** - Senior QA Engineer & Security Auditor approach
+- **Multiple AI Models** - GLM 4.7, Gemini 3 Flash Preview, MiniMax M2.1
+- **Smart Retry & Fallback** - Exponential backoff with automatic model switching
+- **Intelligent Caching** - 1-hour TTL cache for faster repeated checks
+- **Language-Aware** - Specialized checks for 10+ programming languages
+- **Three Review Modes** - Single file, Git diff, Multiple files
+- **Security First** - OWASP checks, performance analysis, architecture review
 
-## 🎯 Review Categories
+## Review Categories
 
-- **❌ Must Fix** - Critical bugs, security flaws, crashes
-- **🟡 Should Fix** - Logic gaps, risky patterns, poor UX
-- **🟢 Suggestions** - Code style, optimizations, best practices
+- **Must Fix** - Critical bugs, security flaws, crashes
+- **Should Fix** - Logic gaps, risky patterns, poor UX
+- **Suggestions** - Code style, optimizations, best practices
 
-## 🔌 Compatibility & Setup
+## Compatibility & Setup
 
 Argus works with any MCP-compatible client.
 
-### 🌊 Windsurf
+### Windsurf
 **File:** `~/.codeium/windsurf/mcp_config.json`
 
 ```json
@@ -55,7 +53,7 @@ Argus works with any MCP-compatible client.
 
 **Reload:** Cmd+Shift+P → "Reload Window"
 
-### 🤖 Claude Desktop (Mac)
+### Claude Desktop (Mac)
 **File:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 
 ```json
@@ -71,7 +69,7 @@ Argus works with any MCP-compatible client.
 
 **Reload:** Restart Claude Desktop application
 
-### 🖱️ Cursor
+### Cursor
 **Setup via UI:**
 
 1. Go to **Cursor Settings** → **Features** → **MCP**
@@ -83,17 +81,17 @@ Argus works with any MCP-compatible client.
 
 **Reload:** Restart Cursor
 
-### 🔧 Other MCP Clients
+### Other MCP Clients
 Use standard MCP stdio protocol configuration.
 
 **Important:** Replace `/absolute/path/to/argus-mcp` with your actual installation path!
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Installation
 
 ```bash
-git clone https://github.com/yourusername/argus-mcp.git
+git clone https://github.com/lokafinnsw/argus-mcp.git
 cd argus-mcp
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
@@ -144,7 +142,7 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 
 **Other MCP clients:** Follow their reload instructions
 
-## 🛠️ Available Tools
+## Available Tools
 
 ### 1. verify_code
 
@@ -192,7 +190,7 @@ Show cache stats
 How many results are cached?
 ```
 
-## 🤖 Supported Models
+## Supported Models
 
 | Model | Provider | Cost | Speed | Quality |
 |-------|----------|------|-------|---------|
@@ -200,7 +198,7 @@ How many results are cached?
 | **Gemini 3 Flash Preview** | OpenRouter | $0.001/1K | Very Fast | Excellent |
 | **MiniMax M2.1** | OpenRouter | $0.001/1K | Medium | Good |
 
-## 🌍 Language Support
+## Language Support
 
 Specialized checks for:
 - Python (PEP 8, type hints, async/await)
@@ -213,7 +211,7 @@ Specialized checks for:
 - Java (SOLID, exceptions, streams)
 - PHP (PSR standards, type declarations)
 
-## 📊 Architecture
+## Architecture
 
 ```
 argus-mcp/
@@ -228,7 +226,7 @@ argus-mcp/
 └── requirements.txt   # Dependencies
 ```
 
-## 🔒 Security Features
+## Security Features
 
 - ✅ API keys in `.env` (not in code)
 - ✅ Input validation (200KB code limit)
@@ -236,7 +234,7 @@ argus-mcp/
 - ✅ `.gitignore` protection
 - ✅ OWASP security checks
 
-## 🧪 Testing
+## Testing
 
 ```bash
 # Test all modes
@@ -249,7 +247,7 @@ python test_gemini.py
 python test_set_model.py
 ```
 
-## 📈 Performance
+## Performance
 
 | Metric | Value |
 |--------|-------|
@@ -258,7 +256,7 @@ python test_set_model.py
 | Success rate (with retry) | 99.9% |
 | Token savings (language hints) | 30-50% |
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
@@ -268,22 +266,21 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 4. Push to the branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
 
-## 📝 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Credits
+## Credits
 
 - **GLM 4.7** by Z.AI
 - **Gemini 3 Flash Preview** by Google (via OpenRouter)
 - **MiniMax M2.1** by MiniMax (via OpenRouter)
 - **MCP Protocol** by Anthropic
 
-## 📞 Support
+## Support
 
-- 📖 [Documentation](./README_V2.md)
-- 🐛 [Report Bug](https://github.com/yourusername/argus-mcp/issues)
-- 💡 [Request Feature](https://github.com/yourusername/argus-mcp/issues)
+- [Report Bug](https://github.com/lokafinnsw/argus-mcp/issues)
+- [Request Feature](https://github.com/lokafinnsw/argus-mcp/issues)
 
 ---
 
