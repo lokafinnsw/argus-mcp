@@ -1,0 +1,9 @@
+# Python project
+*.py linguist-language=Python
+
+# Exclude test files from language stats
+test_*.py linguist-vendored
+**/tests/** linguist-vendored
+
+# Documentation
+*.md linguist-documentation

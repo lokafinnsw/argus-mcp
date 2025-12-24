@@ -1,0 +1,40 @@
+# Environment variables with API keys
+.env
+
+# Test files with hardcoded keys (DO NOT COMMIT)
+test_*.py
+!test_example.py
+test_local.py
+server.py
+
+# Old documentation with personal paths
+README.md
+README_V2.md
+MIGRATION.md
+GITHUB_SETUP.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cache
+*.cache
+
+# Config examples with real keys
+mcp_config_example.json
