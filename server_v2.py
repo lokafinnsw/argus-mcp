@@ -1,37 +1,30 @@
 #!/usr/bin/env python3
 """
 MCP Server: verify_code v2.0
-Проверяет код через множественные AI модели с retry, fallback и кэшированием.
+Verifies code through multiple AI models with retry, fallback and caching.
 """
 
-print(r"""
-   __   ____   ___  _   _  ___ 
-  / _\ (  _ \ / __)( ) ( )/ __)
- /    \ )   /( (_ \ ) (_) )\__ \
- \_/\_/(__\_) \___/ \_____/(___/
-      ARGUS MCP v2.0
-   The All-Seeing Code Reviewer
-""")
-
-import json
 import sys
+import json
 import asyncio
 from typing import Dict, Any, Optional
 
 from config import (
     SERVER_NAME, SERVER_VERSION, MCP_PROTOCOL_VERSION,
-    DEFAULT_MODEL, get_enabled_models
+    DEFAULT_MODEL, get_enabled_models, MODELS, get_fallback_models_for_model
 )
 from validators import validate_arguments, sanitize_file_path
 from prompts import build_system_prompt, build_user_message
 from cache import get_cache
 from models import get_model_manager
+from context_optimizer import ContextOptimizer, OptimizerConfig, OptimizationLevel
 
 
 class MCPServer:
     def __init__(self):
         self.cache = get_cache()
         self.model_manager = get_model_manager()
+        self.optimizer = ContextOptimizer(OptimizerConfig(level=OptimizationLevel.MODERATE))
         
         self.tools = {
             "verify_code": {
@@ -199,7 +192,27 @@ USAGE:
 RESULT: Detailed information about cache state""",
                 "inputSchema": {
                     "type": "object",
-                    "properties": {}
+                    "properties": {},
+                    "required": []
+                }
+            },
+            "retry_with_fallback": {
+                "name": "retry_with_fallback",
+                "description": """Retries the last failed code verification with fallback models.
+
+PURPOSE:
+If the primary model failed during code verification, this tool allows you to retry the verification using fallback models.
+
+USAGE:
+- \"Retry with fallback models\"
+- \"Try other models\"
+- \"Use fallback for last check\"
+
+NOTE: This will use the exact same code and parameters from the last failed verification.""",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
                 }
             },
             "diagnose": {
@@ -230,7 +243,7 @@ RESULT: Diagnostic report with connection status and error analysis""",
         }
 
     def _detect_mode(self, arguments: dict) -> str:
-        """Определяет режим работы на основе переданных параметров"""
+        """Detects operation mode based on provided parameters"""
         if arguments.get("diff"):
             return "diff"
         elif arguments.get("files"):
@@ -264,17 +277,33 @@ RESULT: Diagnostic report with connection status and error analysis""",
         return []
 
     def _format_code_for_review(self, arguments: dict, mode: str) -> tuple:
-        """Форматирует код для проверки в зависимости от режима"""
+        """Formats code for review based on mode (with optimization)"""
         
         if mode == "single":
             file_path = arguments.get("file_path", "unknown")
             code = arguments.get("code", "")
-            header = f"📄 **{file_path}**"
-            content = f"## Код для проверки\n```\n{code}\n```"
+            
+            result = self.optimizer.optimize_single_file(code, file_path)
+            
+            header = f"📄 **{file_path}** (optimized: {result['original_lines']}→{result['processed_lines']} lines)"
+            content = f"## Code to Review\n```{result['language']}\n{result['processed_code']}\n```"
+            
             return (header, content)
         
         elif mode == "diff":
             diff = arguments.get("diff", "")
+            
+            result = self.optimizer.optimize_diff(diff)
+            
+            enriched = result["enriched_diff"]
+            
+            content_parts = ["## Git Diff (Enriched)"]
+            for hunk in enriched.hunks:
+                if hunk.get("parent_signature"):
+                    content_parts.append(f"# In: {hunk['parent_signature']}")
+                content_parts.append(hunk["header"])
+                content_parts.extend(hunk["changes"])
+            
             files = []
             for line in diff.split('\n'):
                 if line.startswith('diff --git'):
@@ -284,56 +313,76 @@ RESULT: Diagnostic report with connection status and error analysis""",
                         files.append(file_path)
             
             header = "\n".join([f"📄 **{f}**" for f in files]) if files else "📄 **Changes**"
-            content = f"## Git Diff\n```diff\n{diff}\n```"
-            return (header, content)
+            content = "\n".join(content_parts)
+            
+            return (header, f"```diff\n{content}\n```")
         
         elif mode == "multiple":
             files = arguments.get("files", [])
-            headers = []
-            contents = []
             
-            for file_info in files:
-                path = file_info.get("path", "unknown")
-                stats = file_info.get("stats", "")
-                file_diff = file_info.get("diff")
-                file_content = file_info.get("content")
-                
+            files_for_optimizer = []
+            for f in files:
+                files_for_optimizer.append({
+                    "path": f.get("path", "unknown"),
+                    "content": f.get("content", ""),
+                    "diff": f.get("diff"),
+                    "is_modified": bool(f.get("diff") or f.get("content"))
+                })
+            
+            result = self.optimizer.optimize_multiple_files(files_for_optimizer)
+            context = result["context"]
+            
+            content_parts = []
+            
+            if context.dependency_graph:
+                content_parts.append(context.dependency_graph)
+                content_parts.append("")
+            
+            for f in context.interfaces_only:
+                content_parts.append(f"### {f['path']} (interface only)")
+                content_parts.append(f"```\n{f['interface']}\n```")
+                content_parts.append("")
+            
+            for f in context.full_content:
+                content_parts.append(f"### {f['path']} (MODIFIED, {f['original_lines']} lines)")
+                content_parts.append(f"```\n{f['content']}\n```")
+                content_parts.append("")
+            
+            headers = []
+            for f in files:
+                path = f.get("path", "unknown")
+                stats = f.get("stats", "")
                 headers.append(f"📄 **{path}** {stats}")
-                
-                if file_diff:
-                    contents.append(f"### {path}\n```diff\n{file_diff}\n```")
-                else:
-                    contents.append(f"### {path}\n```\n{file_content}\n```")
             
             header = "\n".join(headers)
-            content = "\n\n".join(contents)
+            content = "\n".join(content_parts)
+            
             return (header, content)
         
-        else:
-            return ("", "")
+        return ("", "")
 
     async def _verify_code(self, arguments: dict) -> Dict[str, Any]:
-        """Основная логика проверки кода"""
+        """Main code verification logic"""
         
-        # Валидация входных данных
+        # Validate input
         valid, error = validate_arguments(arguments)
         if not valid:
             return {"success": False, "error": f"Validation error: {error}"}
         
-        # Определяем режим и модель
+        # Determine mode and model
         mode = self._detect_mode(arguments)
         model_key = arguments.get("model", DEFAULT_MODEL)
         use_cache = arguments.get("use_cache", True)
-        use_fallback = arguments.get("use_fallback", True)
+        use_fallback = arguments.get("use_fallback", False)  # Disabled by default
         
-        # Проверяем кэш
+        # Check cache
         if use_cache:
             cached_result = self.cache.get(arguments, model_key)
             if cached_result:
                 cached_result["from_cache"] = True
                 return cached_result
         
-        # Форматируем код и строим промпты
+        # Format code and build prompts
         files_header, code_content = self._format_code_for_review(arguments, mode)
         file_paths = self._extract_file_paths(arguments, mode)
         project_stack = arguments.get("project_stack")
@@ -345,31 +394,40 @@ RESULT: Diagnostic report with connection status and error analysis""",
             code_content
         )
         
-        # Вызываем модель (с fallback если включён)
+        # Call model (without automatic fallback by default)
         if use_fallback:
             result = await self.model_manager.verify_with_fallback(
                 system_prompt, user_message, model_key
             )
         else:
-            provider = self.model_manager.get_provider(model_key)
-            result = await provider.verify_code(system_prompt, user_message)
+            result = await self.model_manager.verify_without_fallback(
+                system_prompt, user_message, model_key
+            )
         
-        # Добавляем заголовок файлов к вердикту
+        # If primary model failed and fallback is disabled, ask user
+        if not result["success"] and not use_fallback:
+            result["needs_fallback"] = True
+            result["message"] = f"Primary model '{model_key}' failed. Would you like to try fallback models?"
+            # Save arguments for possible retry
+            self._last_failed_verification = arguments
+        
+        # Add files header to verdict
         if result["success"] and files_header:
             result["verdict"] = f"{files_header}\n\n{result['verdict']}"
         
-        # Сохраняем в кэш
+        # Save to cache
         if use_cache and result["success"]:
             self.cache.set(arguments, model_key, result)
         
         return result
 
     async def _list_models(self) -> Dict[str, Any]:
-        """Возвращает список доступных моделей"""
-        from config import MODELS
-        
+        """Returns list of available models"""
         models_info = []
         for key, config in MODELS.items():
+            # Get fallback models for this model
+            fallback_models = get_fallback_models_for_model(key)
+            
             models_info.append({
                 "key": key,
                 "name": config["name"],
@@ -377,7 +435,8 @@ RESULT: Diagnostic report with connection status and error analysis""",
                 "enabled": config["enabled"],
                 "cost_input_per_1k": config["cost_input_per_1k"],
                 "cost_output_per_1k": config["cost_output_per_1k"],
-                "max_tokens": config["max_tokens"]
+                "max_tokens": config["max_tokens"],
+                "fallback_models": fallback_models
             })
         
         return {
@@ -387,7 +446,7 @@ RESULT: Diagnostic report with connection status and error analysis""",
         }
 
     async def _set_default_model(self, model_key: str) -> Dict[str, Any]:
-        """Устанавливает модель по умолчанию для сессии"""
+        """Sets default model for session"""
         from config import MODELS, get_enabled_models
         
         enabled_models = get_enabled_models()
@@ -398,8 +457,8 @@ RESULT: Diagnostic report with connection status and error analysis""",
                 "error": f"Model '{model_key}' not available. Enabled models: {', '.join(enabled_models)}"
             }
         
-        # В реальности DEFAULT_MODEL это константа из config.py
-        # Для сессионного изменения нужно хранить в self
+        # DEFAULT_MODEL is a constant from config.py
+        # For session changes we store in self
         if not hasattr(self, '_session_default_model'):
             self._session_default_model = DEFAULT_MODEL
         
@@ -413,24 +472,85 @@ RESULT: Diagnostic report with connection status and error analysis""",
             "old_model": old_model,
             "new_model": model_key,
             "model_name": model_config["name"],
-            "message": f"Модель по умолчанию изменена с '{old_model}' на '{model_key}' ({model_config['name']})"
+            "message": f"Default model changed from '{old_model}' to '{model_key}' ({model_config['name']})"
         }
 
     async def _cache_stats(self) -> Dict[str, Any]:
-        """Возвращает статистику кэша"""
+        """Returns cache statistics"""
         return {
             "success": True,
             "cache": self.cache.stats()
         }
 
-    async def _diagnose(self) -> str:
-        """Диагностика API подключений и ошибок"""
+    async def _retry_with_fallback(self, arguments: dict) -> Dict[str, Any]:
+        """Retries last verification using fallback models"""
+        # Check if there are saved arguments from last verification
+        if not hasattr(self, '_last_failed_verification'):
+            return {
+                "success": False,
+                "error": "No failed verification found to retry"
+            }
+        
+        # Get arguments from last verification
+        last_arguments = self._last_failed_verification
+        
+        # Copy arguments and enable fallback
+        retry_arguments = last_arguments.copy()
+        retry_arguments["use_fallback"] = True
+        
+        # Execute verification with fallback
+        result = await self._verify_code(retry_arguments)
+        
+        # If verification successful, remove saved arguments
+        if result["success"]:
+            delattr(self, '_last_failed_verification')
+        
+        return result
+
+    async def _test_model_connection(self, model_key: str, config: dict) -> tuple:
+        """Tests connection to a single model (with timeout)"""
         import httpx
+        
+        if not config.get("enabled"):
+            return (model_key, "⏭️ Skipped (no API key)", None)
+        
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                headers = {
+                    "Authorization": f"Bearer {config['api_key']}",
+                    "Content-Type": "application/json"
+                }
+                if config['provider'] == 'openrouter':
+                    headers["HTTP-Referer"] = "https://argus-mcp-diagnose"
+                
+                await client.post(
+                    f"{config['base_url']}/chat/completions",
+                    headers=headers,
+                    json={
+                        "model": config['model_id'],
+                        "messages": [{"role": "user", "content": "Hi"}],
+                        "max_tokens": 5
+                    }
+                )
+                return (model_key, "✅ Connected", 200)
+        
+        except httpx.TimeoutException:
+            return (model_key, "⏱️ Timeout", "TIMEOUT")
+        except httpx.HTTPStatusError as e:
+            error_text = e.response.text[:50]
+            return (model_key, f"❌ HTTP {e.response.status_code}: {error_text}", e.response.status_code)
+        except httpx.ConnectError as e:
+            return (model_key, f"🌐 Connection failed", "CONNECT_ERROR")
+        except Exception as e:
+            return (model_key, f"❓ {str(e)[:30]}", "ERROR")
+    
+    async def _diagnose(self) -> str:
+        """Diagnoses API connections and errors"""
         from models import get_error_log, format_error_for_user
         
         lines = ["# 🔍 Argus MCP Diagnostics\n"]
         
-        # 1. Проверка API ключей
+        # 1. Check API keys
         lines.append("## API Keys Status\n")
         for model_key, config in MODELS.items():
             has_key = bool(config.get("api_key"))
@@ -441,52 +561,30 @@ RESULT: Diagnostic report with connection status and error analysis""",
                 lines.append(f"  - Key: `{key_preview}`")
                 lines.append(f"  - Provider: {config['provider']}")
         
-        # 2. Тест подключения к API
+        # 2. Test API connections (parallel, with timeout)
         lines.append("\n## Connection Tests\n")
         
-        test_results = []
-        for model_key, config in MODELS.items():
-            if not config.get("enabled"):
-                test_results.append((model_key, "⏭️ Skipped (no API key)", None))
-                continue
+        try:
+            # Create tasks and wait for completion with global timeout
+            test_tasks = [
+                self._test_model_connection(key, config)
+                for key, config in MODELS.items()
+            ]
             
-            try:
-                async with httpx.AsyncClient(timeout=10) as client:
-                    # Простой тест - отправляем минимальный запрос
-                    headers = {
-                        "Authorization": f"Bearer {config['api_key']}",
-                        "Content-Type": "application/json"
-                    }
-                    if config['provider'] == 'openrouter':
-                        headers["HTTP-Referer"] = "https://argus-mcp-diagnose"
-                    
-                    response = await client.post(
-                        f"{config['base_url']}/chat/completions",
-                        headers=headers,
-                        json={
-                            "model": config['model_id'],
-                            "messages": [{"role": "user", "content": "Hi"}],
-                            "max_tokens": 5
-                        }
-                    )
-                    
-                    if response.status_code == 200:
-                        test_results.append((model_key, "✅ Connected", response.status_code))
-                    else:
-                        error_text = response.text[:100]
-                        test_results.append((model_key, f"❌ HTTP {response.status_code}: {error_text}", response.status_code))
+            # Wait for all tests with 15 second timeout for entire process
+            test_results = await asyncio.wait_for(
+                asyncio.gather(*test_tasks, return_exceptions=True),
+                timeout=15.0
+            )
             
-            except httpx.TimeoutException:
-                test_results.append((model_key, "⏱️ Timeout (>10s)", "TIMEOUT"))
-            except httpx.ConnectError as e:
-                test_results.append((model_key, f"🌐 Connection failed: {str(e)[:50]}", "CONNECT_ERROR"))
-            except Exception as e:
-                test_results.append((model_key, f"❓ Error: {str(e)[:50]}", "ERROR"))
+            for model_key, status, code in test_results:
+                lines.append(f"- **{model_key}**: {status}")
         
-        for model_key, status, code in test_results:
-            lines.append(f"- **{model_key}**: {status}")
+        except asyncio.TimeoutError:
+            lines.append("⏱️ Connection tests timed out (15s). One or more APIs are slow or unresponsive.")
+            lines.append("   Check your network connection or API provider status.")
         
-        # 3. Последние ошибки
+        # 3. Recent errors
         lines.append("\n## Recent Errors\n")
         error_log = get_error_log()
         if error_log:
@@ -497,31 +595,34 @@ RESULT: Diagnostic report with connection status and error analysis""",
         else:
             lines.append("No recent errors recorded.")
         
-        # 4. Рекомендации
+        # 4. Recommendations
         lines.append("\n## Recommendations\n")
         
-        # Анализируем результаты тестов
-        failed_tests = [r for r in test_results if "❌" in r[1] or "⏱️" in r[1] or "🌐" in r[1]]
-        
-        if not failed_tests:
-            lines.append("✅ All systems operational!")
+        # Analyze test results if available
+        if 'test_results' in locals():
+            failed_tests = [r for r in test_results if "❌" in r[1] or "⏱️" in r[1] or "🌐" in r[1]]
+            
+            if not failed_tests:
+                lines.append("✅ All systems operational!")
+            else:
+                for model_key, status, code in failed_tests:
+                    if code == 401:
+                        lines.append(f"- **{model_key}**: Invalid API key. Check `.env` file.")
+                    elif code == 429:
+                        lines.append(f"- **{model_key}**: Rate limited. Wait a few minutes.")
+                    elif code == "TIMEOUT":
+                        lines.append(f"- **{model_key}**: API slow/overloaded. Try later.")
+                    elif code == "CONNECT_ERROR":
+                        lines.append(f"- **{model_key}**: Network issue. Check internet connection.")
+                    else:
+                        lines.append(f"- **{model_key}**: Check API provider status page.")
         else:
-            for model_key, status, code in failed_tests:
-                if code == 401:
-                    lines.append(f"- **{model_key}**: Invalid API key. Check `.env` file.")
-                elif code == 429:
-                    lines.append(f"- **{model_key}**: Rate limited. Wait a few minutes.")
-                elif code == "TIMEOUT":
-                    lines.append(f"- **{model_key}**: API slow/overloaded. Try later.")
-                elif code == "CONNECT_ERROR":
-                    lines.append(f"- **{model_key}**: Network issue. Check internet connection.")
-                else:
-                    lines.append(f"- **{model_key}**: Check API provider status page.")
+            lines.append("⚠️ Could not complete connection tests due to timeout.")
         
         return "\n".join(lines)
 
     async def handle_request(self, request: dict) -> dict:
-        """Обрабатывает MCP запрос"""
+        """Handles MCP request"""
         method = request.get("method", "")
         req_id = request.get("id")
         params = request.get("params", {})
@@ -558,36 +659,36 @@ RESULT: Diagnostic report with connection status and error analysis""",
                 result = await self._verify_code(arguments)
                 
                 if result["success"]:
-                    # Формируем вывод
+                    # Format output
                     content_parts = [result['verdict']]
                     
-                    # Добавляем информацию о модели
-                    model_info = f"*Проверено моделью: {result['model']}*"
+                    # Add model info
+                    model_info = f"*Verified by: {result['model']}*"
                     
-                    # Добавляем информацию о fallback если использовался
+                    # Add fallback info if used
                     if result.get("fallback_used"):
-                        model_info += f"\n*⚠️ Fallback: основная модель {result['primary_model_failed']} не ответила*"
+                        model_info += f"\n*⚠️ Fallback: primary model {result['primary_model_failed']} failed*"
                     
-                    # Добавляем информацию о кэше
+                    # Add cache info
                     if result.get("from_cache"):
-                        model_info += "\n*💾 Результат из кэша*"
+                        model_info += "\n*💾 Result from cache*"
                     
-                    # Добавляем стоимость если есть
+                    # Add cost if available
                     if result.get("cost", 0) > 0:
-                        model_info += f"\n*💰 Стоимость: ${result['cost']:.4f}*"
+                        model_info += f"\n*💰 Cost: ${result['cost']:.4f}*"
                     
                     content_parts.append(f"\n---\n{model_info}")
                     content = "\n".join(content_parts)
                 else:
-                    # Формируем детальное сообщение об ошибке
+                    # Format detailed error message
                     error_parts = [f"❌ **Verification Failed**\n"]
                     error_parts.append(f"**Error:** {result['error']}\n")
                     
-                    # Добавляем детали ошибок если есть
+                    # Add error details if available
                     if result.get("error_details"):
                         error_parts.append(f"\n**Details:**\n{result['error_details']}\n")
                     
-                    # Добавляем рекомендации
+                    # Add recommendations
                     if result.get("recommendations"):
                         error_parts.append("\n**Recommendations:**")
                         for rec in result["recommendations"]:
@@ -607,7 +708,7 @@ RESULT: Diagnostic report with connection status and error analysis""",
             elif tool_name == "list_models":
                 result = await self._list_models()
                 
-                # Форматируем вывод
+                # Format output
                 models_text = "# Available Models\n\n"
                 for model in result["models"]:
                     status = "✅" if model["enabled"] else "❌"
@@ -634,16 +735,16 @@ RESULT: Diagnostic report with connection status and error analysis""",
                 result = await self._set_default_model(model_key)
                 
                 if result["success"]:
-                    content = f"""✅ **Модель по умолчанию изменена**
+                    content = f"""✅ **Default Model Changed**
 
-**Старая модель:** `{result['old_model']}`
-**Новая модель:** `{result['new_model']}` ({result['model_name']})
+**Previous model:** `{result['old_model']}`
+**New model:** `{result['new_model']}` ({result['model_name']})
 
-Все последующие проверки кода будут использовать {result['model_name']}, если модель не указана явно.
+All subsequent code verifications will use {result['model_name']} unless explicitly specified.
 
-**Примечание:** Изменение действует только для текущей сессии Windsurf."""
+**Note:** This change applies only to the current Windsurf session."""
                 else:
-                    content = f"❌ Ошибка: {result['error']}"
+                    content = f"❌ Error: {result['error']}"
                 
                 return {
                     "jsonrpc": "2.0",
@@ -672,12 +773,71 @@ RESULT: Diagnostic report with connection status and error analysis""",
                 }
             
             elif tool_name == "diagnose":
-                result = await self._diagnose()
+                try:
+                    result = await asyncio.wait_for(self._diagnose(), timeout=20.0)
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "result": {
+                            "content": [{"type": "text", "text": result}]
+                        }
+                    }
+                except asyncio.TimeoutError:
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "result": {
+                            "content": [{"type": "text", "text": "⏱️ Diagnostics timed out after 20 seconds. One or more APIs are slow or unresponsive. Check your network connection."}]
+                        }
+                    }
+            
+            elif tool_name == "retry_with_fallback":
+                result = await self._retry_with_fallback(arguments)
+                
+                if result["success"]:
+                    # Format output
+                    content_parts = [result['verdict']]
+                    
+                    # Add model info
+                    model_info = f"*Verified by: {result['model']}*"
+                    
+                    # Add fallback info if used
+                    if result.get("fallback_used"):
+                        model_info += f"\n*⚠️ Fallback: primary model {result['primary_model_failed']} failed*"
+                    
+                    # Add cache info
+                    if result.get("from_cache"):
+                        model_info += "\n*💾 Result from cache*"
+                    
+                    # Add cost if available
+                    if result.get("cost", 0) > 0:
+                        model_info += f"\n*💰 Cost: ${result['cost']:.4f}*"
+                    
+                    content_parts.append(f"\n---\n{model_info}")
+                    content = "\n".join(content_parts)
+                else:
+                    # Format detailed error message
+                    error_parts = [f"❌ **Verification Failed**\n"]
+                    error_parts.append(f"**Error:** {result['error']}\n")
+                    
+                    # Add error details if available
+                    if result.get("error_details"):
+                        error_parts.append(f"\n**Details:**\n{result['error_details']}\n")
+                    
+                    # Add recommendations
+                    if result.get("recommendations"):
+                        error_parts.append("\n**Recommendations:**")
+                        for rec in result["recommendations"]:
+                            error_parts.append(f"\n- {rec}")
+                    
+                    error_parts.append("\n\n*Use `Diagnose Argus` for detailed diagnostics*")
+                    content = "".join(error_parts)
+
                 return {
                     "jsonrpc": "2.0",
                     "id": req_id,
                     "result": {
-                        "content": [{"type": "text", "text": result}]
+                        "content": [{"type": "text", "text": content}]
                     }
                 }
             
