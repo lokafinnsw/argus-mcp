@@ -515,7 +515,7 @@ RESULT: Diagnostic report with connection status and error analysis""",
             return (model_key, "⏭️ Skipped (no API key)", None)
         
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
+            async with httpx.AsyncClient(timeout=15) as client:
                 headers = {
                     "Authorization": f"Bearer {config['api_key']}",
                     "Content-Type": "application/json"

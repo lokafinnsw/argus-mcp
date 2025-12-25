@@ -265,10 +265,40 @@ def build_system_prompt(mode: str, file_paths: list[str] = None, project_stack: 
         )
 
 
-def build_user_message(task_context: str, session_changes: str, code_content: str) -> str:
-    """Строит user message"""
+def detect_language(text: str) -> str:
+    """Detects language of text (simple heuristic based on character ranges)"""
+    if not text:
+        return "en"
     
-    return f"""## Задача
+    # Count Cyrillic characters
+    cyrillic_count = sum(1 for c in text if '\u0400' <= c <= '\u04FF')
+    # Count Chinese characters
+    chinese_count = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+    # Total alphabetic characters
+    alpha_count = sum(1 for c in text if c.isalpha())
+    
+    if alpha_count == 0:
+        return "en"
+    
+    cyrillic_ratio = cyrillic_count / alpha_count
+    chinese_ratio = chinese_count / alpha_count
+    
+    if cyrillic_ratio > 0.3:
+        return "ru"
+    elif chinese_ratio > 0.3:
+        return "zh"
+    else:
+        return "en"
+
+
+def build_user_message(task_context: str, session_changes: str, code_content: str) -> str:
+    """Builds user message in detected language"""
+    
+    # Detect language from task_context
+    lang = detect_language(task_context)
+    
+    if lang == "ru":
+        return f"""## Задача
 {task_context}
 
 ## Изменения в сессии
@@ -277,3 +307,25 @@ def build_user_message(task_context: str, session_changes: str, code_content: st
 {code_content}
 
 Проверь код и дай вердикт."""
+    
+    elif lang == "zh":
+        return f"""## 任务
+{task_context}
+
+## 会话更改
+{session_changes or "未指定"}
+
+{code_content}
+
+请检查代码并给出评审意见。"""
+    
+    else:  # English (default)
+        return f"""## Task
+{task_context}
+
+## Session Changes
+{session_changes or "Not specified"}
+
+{code_content}
+
+Review the code and provide your verdict."""
